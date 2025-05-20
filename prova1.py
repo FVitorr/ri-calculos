@@ -9,15 +9,15 @@ class MatrizTFIDF:
         self.tf_matrix = None
         self.idf_matrix = None
         self.tfidf_matrix = None
+        self.df_booleano = None
+        self.df_similaridade = None  # Corrigido nome do atributo
+        self.idf_consulta_matrix = None
 
     def _gerar_vocabulario(self):
         termos = ' '.join(self.documentos).split()
         return sorted(set(termos))
 
     def gerar_matriz_frequencia(self):
-        """
-        Gera a matriz de frequência (frequência absoluta de termos).
-        """
         dados = []
         for termo in self.vocabulario:
             dados.append([doc.split().count(termo) for doc in self.documentos])
@@ -31,10 +31,6 @@ class MatrizTFIDF:
         print(self.matriz_frequencia)
 
     def calcular_tf(self):
-        """
-        Calcula a matriz TF com base na frequência absoluta.
-        TF(i,j) = 1 + log2(f(i,j)) se f(i,j) > 0, senão 0
-        """
         if self.matriz_frequencia is None:
             raise ValueError("A matriz de frequência deve ser gerada primeiro.")
 
@@ -55,12 +51,9 @@ class MatrizTFIDF:
         print(self.tf_matrix)
 
     def calcular_idf(self):
-        """
-        Calcula a IDF para cada termo usando log2(N / ni).
-        """
         if self.matriz_frequencia is None:
             raise ValueError("A matriz de frequência deve ser gerada primeiro.")
-        
+
         N = len(self.documentos)
         idf_values = {}
         for termo in self.vocabulario:
@@ -74,9 +67,6 @@ class MatrizTFIDF:
         print(self.idf_matrix)
 
     def calcular_tfidf(self):
-        """
-        Calcula a matriz TF-IDF multiplicando TF pelo IDF.
-        """
         if self.tf_matrix is None or self.idf_matrix is None:
             raise ValueError("As matrizes TF e IDF devem ser calculadas primeiro.")
 
@@ -92,56 +82,100 @@ class MatrizTFIDF:
         )
         print("\n📙 Matriz TF-IDF:")
         print(self.tfidf_matrix)
-    
+
     def normalizar_tfidf_por_soma(self):
-        """
-        Calcula a raiz quadrada da soma dos valores de cada coluna (documento) da matriz TF-IDF
-        e retorna em um DataFrame com índice 'NORMALIZAÇÃO'.
-        """
         if self.tfidf_matrix is None:
             raise ValueError("A matriz TF-IDF deve ser calculada primeiro.")
 
-        # Soma total de cada coluna
         soma_colunas = self.tfidf_matrix.sum(axis=0)
-
-        # Aplica raiz quadrada
         raiz_colunas = soma_colunas.pow(0.5)
-
-        # Renomeia colunas para o padrão "DOC 1", "DOC 2", ...
         colunas_formatadas = [f'DOC {i+1}' for i in range(len(raiz_colunas))]
-
-        # Cria o DataFrame final com índice "NORMALIZAÇÃO"
         df_normalizacao = pd.DataFrame([raiz_colunas.values], columns=colunas_formatadas, index=["NORMALIZAÇÃO"])
+        self.normalizacao_por_soma = df_normalizacao
 
         print("\n📏 NORMALIZAÇÃO (raiz da soma das colunas):")
         print(df_normalizacao)
 
-        # Armazena se precisar usar depois
-        self.normalizacao_por_soma = df_normalizacao
-    
-    # Similaridade entre os documentos e cada uma das consultas utilizando o modelo booleano
     def modelo_booleano(self, consultas):
-        print("\n🔍 Similaridade - Modelo Booleano (AND):")
-        for idx, consulta in enumerate(consultas):
+        """
+        Gera um DataFrame binário indicando se cada documento satisfaz (1) ou não (0) cada consulta.
+        """
+        resultados = []
+
+        for consulta in consultas:
             termos = set(consulta.split())
-            resultados = []
-            for i, doc in enumerate(self.documentos):
+            linha = []
+            for doc in self.documentos:
                 palavras_doc = set(doc.split())
-                if termos.issubset(palavras_doc):
-                    resultados.append(f"D{i+1}")
-            print(f"Consulta {idx+1} ({consulta}): Documentos -> {resultados if resultados else 'Nenhum'}")
+                linha.append(1 if termos.issubset(palavras_doc) else 0)
+            resultados.append(linha)
+
+        colunas = [f'DOC {i+1}' for i in range(len(self.documentos))]
+        index = [f'Consulta {i+1} ({c})' for i, c in enumerate(consultas)]
+
+        self.df_booleano = pd.DataFrame(resultados, columns=colunas, index=index)
+
+        print("\n🔎 Modelo Booleano:")
+        print(self.df_booleano)
+    
+    def calcular_idfXconsulta(self, consultas):
+        if self.idf_matrix is None:
+            raise ValueError("A matriz IDF precisa ser calculada antes.")
+
+        resultados = []
+
+        for consulta in consultas:
+            termos = consulta.split()
+            freq = {}
+
+            for termo in termos:
+                freq[termo] = freq.get(termo, 0) + 1
+
+            # Garante que todos os termos do vocabulário existam
+            for termo in self.vocabulario:
+                if termo not in freq:
+                    freq[termo] = 0
+
+            valores = []
+            for termo in self.vocabulario:
+                if freq[termo] > 0:
+                    valor = (1 + math.log2(freq[termo])) * self.idf_matrix.loc[termo, "IDF"]
+                else:
+                    valor = 0
+                valores.append(valor)
+        
+        # Calcular normalização e adicionar
+            normalizacao = math.sqrt(sum([v**2 for v in valores]))
+            valores.append(normalizacao)
+                
+            resultados.append(valores)
+
+        # Cria DataFrame com index igual ao vocabulário e colunas C1, C2, ...
+        df = pd.DataFrame(
+            list(zip(*resultados)),  # transposta para termos nas linhas
+            index=self.vocabulario + ['Normalização'],
+            columns=[f'C{idx+1}' for idx in range(len(consultas))]
+        )
+
+        self.idf_consulta_matrix = df
+
+        print("\n📘 Matriz IDF × Consulta:")
+        print(self.idf_consulta_matrix)
+
 
     def calcular_similaridade_vetorial(self, consultas):
+        """
+        Gera um DataFrame com as similaridades de cosseno entre as consultas e os documentos.
+        """
         if self.tfidf_matrix is None:
             raise ValueError("A matriz TF-IDF precisa ser calculada.")
 
-        print("\n📐 Similaridade - Modelo Vetorial (Cosseno - sem sklearn):")
+        resultados = []
 
-        for idx, consulta in enumerate(consultas):
+        for consulta in consultas:
             termos_consulta = consulta.split()
             vetor_consulta = []
 
-            # Monta vetor TF-IDF da consulta
             for termo in self.vocabulario:
                 freq = termos_consulta.count(termo)
                 if freq > 0:
@@ -151,37 +185,85 @@ class MatrizTFIDF:
                 else:
                     vetor_consulta.append(0.0)
 
-            # Similaridade com cada documento
+            linha_similaridades = []
             for i in range(len(self.documentos)):
                 vetor_doc = self.tfidf_matrix[f'D{i+1}'].values.tolist()
-
-                # Produto escalar
                 produto_escalar = sum(c * d for c, d in zip(vetor_consulta, vetor_doc))
-
-                # Normas
                 norma_consulta = math.sqrt(sum(c ** 2 for c in vetor_consulta))
                 norma_doc = math.sqrt(sum(d ** 2 for d in vetor_doc))
+                similaridade = produto_escalar / (norma_consulta * norma_doc) if norma_consulta and norma_doc else 0.0
+                linha_similaridades.append(round(similaridade, 4))
 
-                # Similaridade de cosseno
-                if norma_consulta == 0 or norma_doc == 0:
-                    similaridade = 0.0
-                else:
-                    similaridade = produto_escalar / (norma_consulta * norma_doc)
+            resultados.append(linha_similaridades)
 
-                print(f"Consulta {idx+1} ({consulta}) vs Documento D{i+1}: Similaridade = {similaridade:.4f}")
+        colunas = [f'DOC {i+1}' for i in range(len(self.documentos))]
+        index = [f'Consulta {i+1} ({c})' for i, c in enumerate(consultas)]
 
-       
+        self.df_similaridade = pd.DataFrame(resultados, columns=colunas, index=index)
+
+        print("\n📐 Similaridade Vetorial:")
+        print(self.df_similaridade)
+    
+    def exportFile(self, nome_arquivo):
+        with pd.ExcelWriter(nome_arquivo, engine='xlsxwriter') as writer:
+            # Cria planilha vazia para pegar worksheet
+            pd.DataFrame().to_excel(writer, sheet_name='Planilha1')
+            ws = writer.sheets['Planilha1']
+
+            coluna_atual = 0
+            linha_titulo = 0  # título fica na linha 0, os dados começam na linha 1
+
+            def escrever_titulo(texto, linha, coluna):
+                ws.write(linha, coluna, texto)
+
+            def salvar_df_com_titulo(df, titulo, linha_inicio, coluna_inicio):
+                escrever_titulo(titulo, linha_inicio, coluna_inicio)
+                df.to_excel(writer, sheet_name='Planilha1', startrow=linha_inicio + 1, startcol=coluna_inicio, header=True, index=True)
+                return coluna_inicio + df.shape[1] + 3  # pula 3 colunas para próxima tabela
+
+            if self.matriz_frequencia is not None:
+                coluna_atual = salvar_df_com_titulo(self.matriz_frequencia, "Matriz Frequência", linha_titulo, coluna_atual)
+
+            if self.tf_matrix is not None:
+                coluna_atual = salvar_df_com_titulo(self.tf_matrix, "Matriz TF", linha_titulo, coluna_atual)
+
+            if self.idf_matrix is not None:
+                coluna_atual = salvar_df_com_titulo(self.idf_matrix, "Matriz IDF", linha_titulo, coluna_atual)
+
+            if self.tfidf_matrix is not None:
+                coluna_atual = salvar_df_com_titulo(self.tfidf_matrix, "Matriz TF-IDF", linha_titulo, coluna_atual)
+
+            if hasattr(self, 'normalizacao_por_soma'):
+                coluna_atual = salvar_df_com_titulo(self.normalizacao_por_soma, "Normalização TF-IDF", linha_titulo, coluna_atual)
+
+            if self.df_booleano is not None:
+                coluna_atual = salvar_df_com_titulo(self.df_booleano, "Modelo Booleano (binário)", linha_titulo, coluna_atual)
+
+            if hasattr(self, 'idf_consulta_matrix'):
+                coluna_atual = salvar_df_com_titulo(self.idf_consulta_matrix, "1 log(freq) × idf", linha_titulo, coluna_atual)
+
+            if hasattr(self, 'df_similaridade'):
+                coluna_atual = salvar_df_com_titulo(self.df_similaridade, "Similaridade Vetorial (coseno)", linha_titulo, coluna_atual)
+
+
+
+
+
+
 
 # --- EXEMPLO DE USO ---
 documentos = [
-    "nota prova avaliação sala data prova",
-    "aluno nota avaliação sala nota",
-    "aluno prova avaliação",
+    "homem estar tempo coisa dizer ir ter",
+    "senhora estar dia moço moço senhora",
+    "senhora vez senhora senhora tempo dizer filho",
+    "casa ir ir dizer ter olho",
+    "olho dia vez dia homem moço tempo",
 ]
 
-consulta = [
-    "nota aluno"
-    "data prova"
+consultas = [
+    "homem moço",
+    "dizer ir tempo",
+    "dia senhora casa",
 ]
 
 matriz_tfidf = MatrizTFIDF(documentos)
@@ -190,4 +272,9 @@ matriz_tfidf.calcular_tf()
 matriz_tfidf.calcular_idf()
 matriz_tfidf.calcular_tfidf()
 matriz_tfidf.normalizar_tfidf_por_soma()
+matriz_tfidf.modelo_booleano(consultas)
+matriz_tfidf.calcular_idfXconsulta(consultas)
+matriz_tfidf.calcular_similaridade_vetorial(consultas)
+matriz_tfidf.exportFile("atv2.xlsx")
+
 
